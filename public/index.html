@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Hervino Meet</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mediasoup-client@3.6.10/dist/mediasoup-client.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎥 Hervino Meet</h1>
+      <div class="room-controls">
+        <input type="text" id="roomInput" placeholder="Nom de la salle" value="room1" />
+        <button id="joinBtn">▶️ Rejoindre</button>
+        <button id="leaveBtn" disabled>⏹️ Quitter</button>
+        <span id="roomInfo"></span>
+      </div>
+    </header>
+
+    <div id="status" class="status">Prêt</div>
+
+    <div class="videos" id="videosContainer">
+      <!-- Vidéos injectées ici -->
+    </div>
+
+    <div class="local-controls">
+      <button id="toggleAudio" disabled>🔊 Audio ON</button>
+      <button id="toggleVideo" disabled>📹 Vidéo ON</button>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "video-app-learning",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.1",
+    "mediasoup": "^3.19.17",
+    "socket.io": "^4.8.3"
+  }
+}
