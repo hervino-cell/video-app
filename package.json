@@ -1,9 +1,14 @@
 {
   "name": "video-app-learning",
   "version": "1.0.0",
+  "description": "WebRTC video conferencing with Mediasoup",
+  "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -11,5 +16,8 @@
     "express": "^4.22.1",
     "mediasoup": "^3.19.17",
     "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
   }
 }

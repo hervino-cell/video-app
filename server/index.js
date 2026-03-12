@@ -3,24 +3,30 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const mediasoup = require('mediasoup');
+const path = require('path');
 
-// Configuration
 const app = express();
 const server = http.createServer(app);
+
+// CORS configuration for Render
 const io = new Server(server, { 
-  cors: { origin: "*", methods: ["GET", "POST"] } 
+  cors: { 
+    origin: "*",
+    methods: ["GET", "POST"] 
+  } 
 });
 
-app.use(express.static('public'));
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, '../public')));
 
 // State
 let worker;
-const rooms = new Map(); // roomId -> { router, peers: Map }
+const rooms = new Map();
 
-// Initialisation Mediasoup
+// Initialize Mediasoup
 async function initMediasoup() {
   worker = await mediasoup.createWorker({
-    logLevel: 'error',
+    logLevel: 'warn',
     rtcMinPort: 40000,
     rtcMaxPort: 49999,
   });
@@ -33,7 +39,7 @@ async function initMediasoup() {
   console.log('✅ Mediasoup worker ready');
 }
 
-// Créer un router pour une room
+// Create router for a room
 async function createRouter(roomId) {
   const router = await worker.createRouter({
     mediaCodecs: [
@@ -61,14 +67,14 @@ async function createRouter(roomId) {
   return router;
 }
 
-// Gestion des sockets
+// Socket handlers
 io.on('connection', (socket) => {
   console.log(`🔌 Connecté: ${socket.id}`);
 
-  // === REJOINDRE UNE ROOM ===
+  // === JOIN ROOM ===
   socket.on('join-room', async (roomId, userData, callback) => {
     try {
-      // Créer ou récupérer la room
+      // Create or get room
       if (!rooms.has(roomId)) {
         const router = await createRouter(roomId);
         rooms.set(roomId, { router, peers: new Map() });
@@ -76,7 +82,7 @@ io.on('connection', (socket) => {
       const room = rooms.get(roomId);
       const { router, peers } = room;
 
-      // Stocker les infos du peer
+      // Store peer info
       const peer = {
         id: socket.id,
         roomId,
@@ -88,17 +94,17 @@ io.on('connection', (socket) => {
       };
       peers.set(socket.id, peer);
 
-      // === ÉTAPE 1: Envoyer les capacités du router ===
+      // Send router capabilities
       socket.emit('router-capabilities', {
         routerRtpCapabilities: router.rtpCapabilities
       });
 
-      // === ÉTAPE 2: Créer le transport d'envoi (pour producer) ===
+      // Create send transport
       socket.on('create-send-transport', async (callback) => {
         try {
           const transport = await router.createWebRtcTransport({
             listenIps: [{ 
-              ip: process.env.MEDIASOUP_LISTEN_IP || '127.0.0.1', 
+              ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0', 
               announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null 
             }],
             enableUdp: true,
@@ -109,7 +115,6 @@ io.on('connection', (socket) => {
 
           peer.sendTransport = transport;
 
-          // Gérer la connexion du transport
           transport.on('connect', async ({ dtlsParameters }, cb, errback) => {
             try {
               await transport.connect({ dtlsParameters });
@@ -119,15 +124,12 @@ io.on('connection', (socket) => {
             }
           });
 
-          // Gérer la production de flux
           transport.on('produce', async ({ kind, rtpParameters, appData }, cb, errback) => {
             try {
               const producer = await transport.produce({ kind, rtpParameters, appData });
-              
-              // Stocker le producer
               peer.producers.set(producer.id, producer);
               
-              // Notifier les autres peers
+              // Notify other peers
               socket.to(roomId).emit('new-producer', {
                 producerId: producer.id,
                 userId: socket.id,
@@ -153,12 +155,12 @@ io.on('connection', (socket) => {
         }
       });
 
-      // === ÉTAPE 3: Créer le transport de réception (pour consumer) ===
+      // Create recv transport
       socket.on('create-recv-transport', async (callback) => {
         try {
           const transport = await router.createWebRtcTransport({
             listenIps: [{ 
-              ip: process.env.MEDIASOUP_LISTEN_IP || '127.0.0.1', 
+              ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0', 
               announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null 
             }],
             enableUdp: true,
@@ -189,12 +191,11 @@ io.on('connection', (socket) => {
         }
       });
 
-      // === ÉTAPE 4: Consommer un producer d'un autre peer ===
+      // Consume producer
       socket.on('consume', async ({ producerId, rtpCapabilities }, callback) => {
         try {
           const { router } = room;
           
-          // Vérifier si on peut consommer
           if (!router.canConsume({ producerId, rtpCapabilities })) {
             return callback({ error: 'Cannot consume: incompatible capabilities' });
           }
@@ -202,13 +203,11 @@ io.on('connection', (socket) => {
           const consumer = await peer.recvTransport.consume({
             producerId,
             rtpCapabilities,
-            paused: false // Démarrer directement
+            paused: false
           });
 
-          // Stocker le consumer
           peer.consumers.set(consumer.id, consumer);
 
-          // Trouver qui produit ce flux
           let producerUserId = null;
           for (const [uid, p] of peers) {
             if (p.producers.has(producerId)) {
@@ -232,7 +231,7 @@ io.on('connection', (socket) => {
         }
       });
 
-      // === ÉTAPE 5: Resume/pause un consumer ===
+      // Resume consumer
       socket.on('resume-consumer', async ({ consumerId }, callback) => {
         try {
           const consumer = peer.consumers.get(consumerId);
@@ -247,33 +246,26 @@ io.on('connection', (socket) => {
         }
       });
 
-      // === GESTION DÉCONNEXION ===
+      // Disconnect
       socket.on('disconnect', () => {
         console.log(`🔌 Déconnecté: ${socket.id}`);
-        
-        // Notifier les autres
         socket.to(roomId).emit('user-disconnected', socket.id);
         
-        // Cleanup
         if (room && room.peers) {
           const peer = room.peers.get(socket.id);
           if (peer) {
-            // Fermer tous les consumers
             for (const consumer of peer.consumers.values()) {
               consumer.close();
             }
-            // Fermer tous les producers
             for (const producer of peer.producers.values()) {
               producer.close();
             }
-            // Fermer les transports
             if (peer.sendTransport) peer.sendTransport.close();
             if (peer.recvTransport) peer.recvTransport.close();
             
             room.peers.delete(socket.id);
           }
           
-          // Supprimer la room si vide
           if (room.peers.size === 0) {
             rooms.delete(roomId);
             console.log(`🗑️ Room supprimée: ${roomId}`);
@@ -281,7 +273,6 @@ io.on('connection', (socket) => {
         }
       });
 
-      // Callback pour confirmer le join
       if (callback && typeof callback === 'function') {
         callback({ success: true, roomId });
       }
@@ -294,18 +285,22 @@ io.on('connection', (socket) => {
     }
   });
 
-  // === PING/PONG pour keep-alive ===
   socket.on('ping', () => socket.emit('pong'));
 });
 
-// Démarrage serveur
+// === CRITICAL: RENDER REQUIRES THIS ===
 async function startServer() {
   await initMediasoup();
   
+  // Render ALWAYS assigns PORT env variable
   const PORT = process.env.PORT || 3000;
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Serveur prêt sur http://localhost:${PORT}`);
+  const LISTEN_IP = process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0';
+  
+  server.listen(PORT, LISTEN_IP, () => {
+    console.log(`🚀 Server prêt on ${LISTEN_IP}:${PORT}`);
     console.log(`📡 Ports RTC: 40000-49999`);
+    console.log(`🌍 Announced IP: ${process.env.MEDIASOUP_ANNOUNCED_IP}`);
+    console.log(`🔧 Environment: ${process.env.NODE_ENV}`);
   });
 }
 
