@@ -1,0 +1,14 @@
+@'
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.env.local
+.DS_Store
+README.md
+build
+dist
+.vscode
+.idea
+'@ | Out-File -FilePath .dockerignore -Encoding UTF8 -NoNewline

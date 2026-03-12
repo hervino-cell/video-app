@@ -1,0 +1,37 @@
+app = "video-app-learning"
+primary_region = "sjc"
+
+[build]
+  image = "video-app-learning:deployment-xxxxx"
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+  MEDIASOUP_LISTEN_IP = "0.0.0.0"
+  # MEDIASOUP_ANNOUNCED_IP will be set dynamically after deployment
+
+[[services]]
+  internal_port = 3000
+  processes = ["app"]
+
+  [services.tcp_checks]
+    grace_period = "5s"
+    interval = "15s"
+    timeout = "2s"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+# Optional: UDP ports for Mediasoup RTC (if needed for direct peer connections)
+# Uncomment if using custom TURN/STUN
+# [[services]]
+#   protocol = "udp"
+#   internal_port = 40000
+#   [services.ports]
+#     port = 40000
