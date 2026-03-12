@@ -7,16 +7,16 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (only production)
+# Install dependencies (production only)
 RUN npm install --omit=dev
 
 # Copy application code
 COPY . .
 
-# Expose port (default 3000, but can be overridden)
+# Expose port
 EXPOSE 3000
 
-# Health check (optional but recommended)
+# Health check (optional)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
