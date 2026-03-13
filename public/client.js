@@ -1,3 +1,5 @@
+// mediasoup-client bundled by esbuild with --global-name=mediasoupClient
+// exposes window.mediasoupClient
 const mediasoupClient = window.mediasoupClient;
 
 const socket = io({
