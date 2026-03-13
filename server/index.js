@@ -19,42 +19,29 @@ app.use(express.static('public'));
 const path = require('path');
 const fs   = require('fs');
 
-// Locate mediasoup-client dist file
-let mediasoupClientPath;
-try {
-    const mainEntry = require.resolve('mediasoup-client');
-    console.log('mediasoup-client main entry:', mainEntry);
+// Download browser bundle of mediasoup-client from unpkg at startup
+// and cache it in memory — avoids CDN issues at runtime in the browser
+let mediasoupClientBundle = null;
 
-    // List all files in the package dir for debugging
-    const pkgDir = mainEntry.substring(0, mainEntry.lastIndexOf('mediasoup-client') + 'mediasoup-client'.length);
-    console.log('mediasoup-client pkgDir:', pkgDir);
-    const distDir = path.join(pkgDir, 'dist');
-    if (fs.existsSync(distDir)) {
-        console.log('dist/ contents:', fs.readdirSync(distDir));
-    } else {
-        console.log('No dist/ folder found, listing pkgDir:', fs.readdirSync(pkgDir));
+async function fetchMediasoupClientBundle() {
+    const BUNDLE_URL = 'https://unpkg.com/mediasoup-client@3.7.6/dist/mediasoup-client.js';
+    try {
+        const res = await fetch(BUNDLE_URL);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        mediasoupClientBundle = await res.text();
+        console.log(`✅ mediasoup-client browser bundle downloaded (${(mediasoupClientBundle.length / 1024).toFixed(0)} KB)`);
+    } catch (e) {
+        console.error('❌ Failed to download mediasoup-client bundle:', e.message);
     }
-
-    // Try several possible filenames
-    const candidates = [
-        path.join(pkgDir, 'dist', 'mediasoup-client.js'),
-        path.join(pkgDir, 'dist', 'mediasoup-client.min.js'),
-        path.join(pkgDir, 'dist', 'umd', 'mediasoup-client.js'),
-        mainEntry  // fallback: just serve the main entry itself
-    ];
-    mediasoupClientPath = candidates.find(p => fs.existsSync(p));
-    if (!mediasoupClientPath) throw new Error('No suitable file found in: ' + JSON.stringify(candidates));
-    console.log('✅ mediasoup-client serving:', mediasoupClientPath);
-} catch (e) {
-    console.error('❌ mediasoup-client error:', e.message);
 }
 
 app.get('/mediasoup-client.js', (req, res) => {
-    if (!mediasoupClientPath) {
-        return res.status(500).send('// mediasoup-client not installed. Run: npm install');
+    if (!mediasoupClientBundle) {
+        return res.status(503).send('// mediasoup-client bundle not ready yet, retry in a moment');
     }
     res.setHeader('Content-Type', 'application/javascript');
-    res.sendFile(mediasoupClientPath);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.send(mediasoupClientBundle);
 });
 
 let worker;
@@ -321,9 +308,10 @@ async function detectPublicIp() {
 
 // === START ===
 async function startServer() {
-    await detectPublicIp();   // must run before transports are created
+    await detectPublicIp();             // must run before transports are created
     await initMediasoup();
-    await getIceServers();    // warm the TURN cache at boot
+    await getIceServers();              // warm the TURN cache at boot
+    await fetchMediasoupClientBundle(); // download browser bundle at startup
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`🚀 Server running on port ${PORT}`);
