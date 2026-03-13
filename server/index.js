@@ -15,6 +15,29 @@ const io = new Server(server, {
 
 app.use(express.static('public'));
 
+// Serve mediasoup-client bundle from node_modules (no CDN needed)
+const path = require('path');
+const fs   = require('fs');
+
+// require.resolve finds the package regardless of folder depth
+let mediasoupClientPath;
+try {
+    const pkgDir = path.dirname(require.resolve('mediasoup-client/package.json'));
+    mediasoupClientPath = path.join(pkgDir, 'dist', 'mediasoup-client.js');
+    if (!fs.existsSync(mediasoupClientPath)) throw new Error('dist not found');
+    console.log('✅ mediasoup-client bundle:', mediasoupClientPath);
+} catch (e) {
+    console.error('❌ mediasoup-client not installed:', e.message);
+}
+
+app.get('/mediasoup-client.js', (req, res) => {
+    if (!mediasoupClientPath) {
+        return res.status(500).send('// mediasoup-client not installed. Run: npm install');
+    }
+    res.setHeader('Content-Type', 'application/javascript');
+    res.sendFile(mediasoupClientPath);
+});
+
 let worker;
 let cachedIceServers = null;
 let iceServersFetchedAt = 0;
