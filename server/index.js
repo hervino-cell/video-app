@@ -19,15 +19,34 @@ app.use(express.static('public'));
 const path = require('path');
 const fs   = require('fs');
 
-// require.resolve finds the package regardless of folder depth
+// Locate mediasoup-client dist file
 let mediasoupClientPath;
 try {
-    const pkgDir = path.dirname(require.resolve('mediasoup-client/package.json'));
-    mediasoupClientPath = path.join(pkgDir, 'dist', 'mediasoup-client.js');
-    if (!fs.existsSync(mediasoupClientPath)) throw new Error('dist not found');
-    console.log('✅ mediasoup-client bundle:', mediasoupClientPath);
+    const mainEntry = require.resolve('mediasoup-client');
+    console.log('mediasoup-client main entry:', mainEntry);
+
+    // List all files in the package dir for debugging
+    const pkgDir = mainEntry.substring(0, mainEntry.lastIndexOf('mediasoup-client') + 'mediasoup-client'.length);
+    console.log('mediasoup-client pkgDir:', pkgDir);
+    const distDir = path.join(pkgDir, 'dist');
+    if (fs.existsSync(distDir)) {
+        console.log('dist/ contents:', fs.readdirSync(distDir));
+    } else {
+        console.log('No dist/ folder found, listing pkgDir:', fs.readdirSync(pkgDir));
+    }
+
+    // Try several possible filenames
+    const candidates = [
+        path.join(pkgDir, 'dist', 'mediasoup-client.js'),
+        path.join(pkgDir, 'dist', 'mediasoup-client.min.js'),
+        path.join(pkgDir, 'dist', 'umd', 'mediasoup-client.js'),
+        mainEntry  // fallback: just serve the main entry itself
+    ];
+    mediasoupClientPath = candidates.find(p => fs.existsSync(p));
+    if (!mediasoupClientPath) throw new Error('No suitable file found in: ' + JSON.stringify(candidates));
+    console.log('✅ mediasoup-client serving:', mediasoupClientPath);
 } catch (e) {
-    console.error('❌ mediasoup-client not installed:', e.message);
+    console.error('❌ mediasoup-client error:', e.message);
 }
 
 app.get('/mediasoup-client.js', (req, res) => {
