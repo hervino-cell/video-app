@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lets Meet Powered By Hervinism</title>
+    <title>By Powered By Hervinism</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,21 +27,18 @@
             <button id="toggleVideo" disabled>📹 Vidéo ON</button>
         </div>
     </div>
-    
-    <!-- Socket.IO -->
+
+    <!-- Socket.IO from CDN (reliable) -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
-    <!-- mediasoup-client via unpkg (more reliable for this package) -->
-    <script src="https://unpkg.com/mediasoup-client@3.7.6/dist/mediasoup-client.min.js"></script>
+    <!-- mediasoup-client served directly from YOUR server (no CDN issues) -->
+    <script src="/mediasoup-client.js"></script>
 
-    <!-- Verify mediasoup loaded before client.js runs -->
+    <!-- Safety check -->
     <script>
-        if (typeof window.mediasoupClient === 'undefined') {
-            document.getElementById('status').textContent = '❌ Erreur: mediasoup-client CDN failed to load.';
+        if (typeof mediasoupClient === 'undefined') {
+            document.getElementById('status').textContent = '❌ Erreur fatale: mediasoup-client non chargé. Vérifiez les logs serveur.';
             document.getElementById('status').className = 'status error';
-            console.error('mediasoup-client failed to load from CDN');
-        } else {
-            console.log('✅ mediasoup-client loaded OK');
         }
     </script>
 

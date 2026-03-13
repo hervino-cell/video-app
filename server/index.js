@@ -19,30 +19,7 @@ app.use(express.static('public'));
 const path = require('path');
 const fs   = require('fs');
 
-// Download browser bundle of mediasoup-client from unpkg at startup
-// and cache it in memory — avoids CDN issues at runtime in the browser
-let mediasoupClientBundle = null;
 
-async function fetchMediasoupClientBundle() {
-    const BUNDLE_URL = 'https://unpkg.com/mediasoup-client@3.7.6/dist/mediasoup-client.js';
-    try {
-        const res = await fetch(BUNDLE_URL);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        mediasoupClientBundle = await res.text();
-        console.log(`✅ mediasoup-client browser bundle downloaded (${(mediasoupClientBundle.length / 1024).toFixed(0)} KB)`);
-    } catch (e) {
-        console.error('❌ Failed to download mediasoup-client bundle:', e.message);
-    }
-}
-
-app.get('/mediasoup-client.js', (req, res) => {
-    if (!mediasoupClientBundle) {
-        return res.status(503).send('// mediasoup-client bundle not ready yet, retry in a moment');
-    }
-    res.setHeader('Content-Type', 'application/javascript');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.send(mediasoupClientBundle);
-});
 
 let worker;
 let cachedIceServers = null;
@@ -308,10 +285,9 @@ async function detectPublicIp() {
 
 // === START ===
 async function startServer() {
-    await detectPublicIp();             // must run before transports are created
+    await detectPublicIp();   // must run before transports are created
     await initMediasoup();
-    await getIceServers();              // warm the TURN cache at boot
-    await fetchMediasoupClientBundle(); // download browser bundle at startup
+    await getIceServers();    // warm the TURN cache at boot
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`🚀 Server running on port ${PORT}`);

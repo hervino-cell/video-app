@@ -5,7 +5,9 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js"
+    "dev": "nodemon server/index.js",
+    "build": "esbuild --bundle --global-name=mediasoupClient --outfile=public/mediasoup-client.js node_modules/mediasoup-client/lib/index.js",
+    "render-build": "npm install && npm run build"
   },
   "engines": {
     "node": "24.x"
@@ -19,6 +21,7 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^2.0.20"
+    "nodemon": "^2.0.20",
+    "esbuild": "^0.21.0"
   }
 }
