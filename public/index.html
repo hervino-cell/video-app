@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lets Meet By Hervinism</title>
+    <title>Hervino Meet</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🎥 Lets Meet</h1>
+            <h1>🎥 Hervino Meet</h1>
             <div class="room-controls">
                 <input type="text" id="roomInput" placeholder="Nom de la salle" value="room1">
                 <button id="joinBtn">▶️ Rejoindre</button>
@@ -28,9 +28,23 @@
         </div>
     </div>
     
-    <!-- REQUIRED CDNs - Must load before client.js -->
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mediasoup-client@3.6.82/dist/mediasoup-client.js"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <!-- mediasoup-client via unpkg (more reliable for this package) -->
+    <script src="https://unpkg.com/mediasoup-client@3.7.6/dist/mediasoup-client.min.js"></script>
+
+    <!-- Verify mediasoup loaded before client.js runs -->
+    <script>
+        if (typeof window.mediasoupClient === 'undefined') {
+            document.getElementById('status').textContent = '❌ Erreur: mediasoup-client CDN failed to load.';
+            document.getElementById('status').className = 'status error';
+            console.error('mediasoup-client failed to load from CDN');
+        } else {
+            console.log('✅ mediasoup-client loaded OK');
+        }
+    </script>
+
     <script src="client.js"></script>
 </body>
 </html>
