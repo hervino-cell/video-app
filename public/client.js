@@ -1,11 +1,12 @@
 // mediasoup-client is bundled by esbuild (npm run build) and served at /mediasoup-client.js
-// It exposes window.mediasoupClient globally.
+// esbuild uses --global-name=mediasoupClient, so the bundle already declares
+// window.mediasoupClient itself — do NOT redeclare it with const/let/var here
+// or the browser will throw "Identifier already declared".
 if (!window.mediasoupClient) {
     document.getElementById('status').textContent =
         '❌ mediasoup-client bundle not found. Run "npm run build" and restart the server.';
     throw new Error('window.mediasoupClient is undefined');
 }
-const mediasoupClient = window.mediasoupClient;
 
 // ── SOCKET ────────────────────────────────────────────────────────────────────
 const socket = io({
@@ -63,7 +64,7 @@ async function joinRoom() {
 
 // ── DEVICE ────────────────────────────────────────────────────────────────────
 async function loadDevice(routerRtpCapabilities) {
-    state.device = new mediasoupClient.Device();
+    state.device = new window.mediasoupClient.Device();
     await state.device.load({ routerRtpCapabilities });
     console.log('✅ Device loaded');
 }
