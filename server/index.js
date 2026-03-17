@@ -230,6 +230,9 @@ io.on('connection', (socket) => {
     });
 
     // ── CONSUME ──────────────────────────────────────────────────────────────
+    // Consumer is created PAUSED. The client calls consumer-resume once the
+    // local consumer is set up and the video element is ready. This is the
+    // correct mediasoup pattern — starting unpaused often leads to black video.
     socket.on('consume', async ({ producerId, rtpCapabilities }, callback) => {
         try {
             const room = getRoom(currentRoomId);
@@ -241,16 +244,18 @@ io.on('connection', (socket) => {
                 return callback({ error: 'Cannot consume' });
 
             const consumer = await peer.recvTransport.consume({
-                producerId, rtpCapabilities, paused: false
+                producerId,
+                rtpCapabilities,
+                paused: true   // always start paused; client resumes after setup
             });
             peer.consumers.set(consumer.id, consumer);
 
-            // Find which peer owns this producer
             let producerUserId = null;
             for (const [uid, p] of room.peers) {
                 if (p.producers.has(producerId)) { producerUserId = uid; break; }
             }
 
+            console.log(`🍽  Consumer ${consumer.id} (${consumer.kind}) for ${socket.id} — paused, waiting for resume`);
             callback({
                 id:            consumer.id,
                 producerId,
@@ -262,6 +267,24 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('consume error:', err);
             callback({ error: err.message });
+        }
+    });
+
+    // ── CONSUMER RESUME ──────────────────────────────────────────────────────
+    // Called by the client once it has attached the track to a video element.
+    socket.on('consumer-resume', async ({ consumerId }) => {
+        try {
+            const room = getRoom(currentRoomId);
+            const peer = room?.peers.get(socket.id);
+            const consumer = peer?.consumers.get(consumerId);
+            if (!consumer) {
+                console.warn(`consumer-resume: consumer ${consumerId} not found`);
+                return;
+            }
+            await consumer.resume();
+            console.log(`▶️  Consumer ${consumerId} resumed`);
+        } catch (err) {
+            console.error('consumer-resume error:', err);
         }
     });
 

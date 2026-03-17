@@ -158,8 +158,16 @@ async function consumeProducer(producerId) {
                     kind:          params.kind,
                     rtpParameters: params.rtpParameters
                 });
+
+                // Attach the track to a video element first...
                 attachRemoteTrack(params.producerUserId, consumer, params.kind);
                 updateParticipantCount();
+
+                // ...then tell the server to resume the consumer so RTP flows.
+                // This is the correct mediasoup pattern (consumer created paused).
+                await consumer.resume();
+                socket.emit('consumer-resume', { consumerId: consumer.id });
+                console.log(`▶️  Consumer ${consumer.id} (${params.kind}) resumed`);
             } catch (err) {
                 console.error('recvTransport.consume error:', err);
             }
@@ -168,11 +176,27 @@ async function consumeProducer(producerId) {
     });
 }
 
-// ── ATTACH REMOTE TRACK TO A VIDEO ELEMENT ────────────────────────────────────
+// ── ATTACH REMOTE TRACK TO A VIDEO/AUDIO ELEMENT ─────────────────────────────
 function attachRemoteTrack(userId, consumer, kind) {
-    const wrapperId = `video-${userId}-${kind}`;
+    if (kind === 'audio') {
+        // Audio consumers: use a hidden <audio> element — no video tile needed
+        const audioId = `audio-${userId}`;
+        let audio = document.getElementById(audioId);
+        if (!audio) {
+            audio = document.createElement('audio');
+            audio.id = audioId;
+            audio.autoplay = true;
+            audio.style.display = 'none';
+            document.body.appendChild(audio);
+        }
+        audio.srcObject = new MediaStream([consumer.track]);
+        playVideo(audio);   // same muted-then-unmute trick works for <audio>
+        state.consumers.set(`${userId}-audio`, { consumer, kind, userId });
+        return;
+    }
 
-    // If a wrapper already exists, just swap the stream
+    // Video consumers: show in a tile
+    const wrapperId = `video-${userId}-${kind}`;
     let wrapper = document.getElementById(wrapperId);
     if (wrapper) {
         const video = wrapper.querySelector('video');
@@ -383,9 +407,11 @@ function setStatus(msg, type = 'info') {
 }
 
 function removeVideosForUser(userId) {
-    ['audio', 'video'].forEach(k =>
+    ['video'].forEach(k =>
         document.getElementById(`video-${userId}-${k}`)?.remove()
     );
+    // Remove hidden audio element too
+    document.getElementById(`audio-${userId}`)?.remove();
 }
 
 function resetUI() {
