@@ -17,14 +17,16 @@ const socket = io({
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const state = {
-    roomId:        null,
-    device:        null,
-    sendTransport: null,
-    recvTransport: null,
-    localStream:   null,
-    producers:     { audio: null, video: null },
-    consumers:     new Map(),   // key: `${userId}-${kind}`  value: { consumer, kind, userId }
-    peers:         new Map()
+    roomId:           null,
+    device:           null,
+    sendTransport:    null,
+    recvTransport:    null,
+    localStream:      null,
+    producers:        { audio: null, video: null },
+    consumers:        new Map(),   // key: `${userId}-${kind}`  value: { consumer, kind, userId }
+    peers:            new Map(),
+    // Producers that arrived before recvTransport was ready – drained after setup
+    pendingProducers: []
 };
 
 // ── DOM REFS (populated after DOMContentLoaded) ───────────────────────────────
@@ -131,8 +133,12 @@ async function createRecvTransport() {
 
 // ── CONSUME A REMOTE PRODUCER ─────────────────────────────────────────────────
 async function consumeProducer(producerId) {
+    // If transports aren't ready yet, queue for later (drained in router-capabilities handler)
     if (!state.device || !state.recvTransport) {
-        console.warn('consumeProducer: device or recvTransport not ready yet');
+        console.log(`⏳ Queuing producer ${producerId} (transports not ready yet)`);
+        if (!state.pendingProducers.includes(producerId)) {
+            state.pendingProducers.push(producerId);
+        }
         return;
     }
 
@@ -166,32 +172,60 @@ async function consumeProducer(producerId) {
 function attachRemoteTrack(userId, consumer, kind) {
     const wrapperId = `video-${userId}-${kind}`;
 
-    // If a wrapper already exists for this user+kind, just update the srcObject
+    // If a wrapper already exists, just swap the stream
     let wrapper = document.getElementById(wrapperId);
     if (wrapper) {
         const video = wrapper.querySelector('video');
         if (video) {
             video.srcObject = new MediaStream([consumer.track]);
-            video.play().catch(() => {});
+            playVideo(video);
         }
         state.consumers.set(`${userId}-${kind}`, { consumer, kind, userId });
         return;
     }
 
-    // Create a new wrapper
     const result = createVideoElement(userId, kind, false);
     wrapper = result.wrapper;
     const { video, placeholder } = result;
 
     video.srcObject = new MediaStream([consumer.track]);
     video.onloadedmetadata = () => {
-        video.play().catch(() => {});
+        playVideo(video);
         if (placeholder) placeholder.style.display = 'none';
     };
 
     el.videosContainer.appendChild(wrapper);
     state.consumers.set(`${userId}-${kind}`, { consumer, kind, userId });
     updateVideoLayout();
+}
+
+// Autoplay helper: browsers need the video muted to allow autoplay.
+// We start muted, play, then unmute so audio comes through.
+function playVideo(video) {
+    video.muted = true;
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+        playPromise
+            .then(() => {
+                // Unmute after playback starts so we hear the remote audio
+                video.muted = false;
+            })
+            .catch((err) => {
+                console.warn('video.play() blocked, waiting for user gesture:', err.message);
+                // Add a click-to-play overlay as fallback
+                const overlay = video.closest('.video-wrapper')?.querySelector('.video-overlay');
+                if (overlay) {
+                    const btn = document.createElement('button');
+                    btn.textContent = '▶ Cliquez pour voir';
+                    btn.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:8px 16px;background:#4ade80;border:none;border-radius:6px;cursor:pointer;font-weight:bold;color:#000;z-index:10';
+                    video.closest('.video-wrapper').appendChild(btn);
+                    btn.onclick = () => {
+                        video.muted = false;
+                        video.play().then(() => btn.remove()).catch(() => {});
+                    };
+                }
+            });
+    }
 }
 
 // ── SOCKET LISTENERS ──────────────────────────────────────────────────────────
@@ -209,6 +243,14 @@ function setupSocketListeners() {
             await createSendTransport();
             await createRecvTransport();
             await startProducing();
+
+            // Now drain any producers that arrived before we were ready
+            const pending = [...state.pendingProducers];
+            state.pendingProducers = [];
+            console.log(`🔄 Draining ${pending.length} pending producer(s)`);
+            for (const producerId of pending) {
+                await consumeProducer(producerId);
+            }
 
             el.toggleAudio.disabled = false;
             el.toggleVideo.disabled = false;
@@ -364,10 +406,11 @@ function leaveRoom() {
     state.recvTransport?.close();
 
     // Reset state
-    state.producers     = { audio: null, video: null };
+    state.producers       = { audio: null, video: null };
     state.consumers.clear();
     state.peers.clear();
-    state.sendTransport = null;
+    state.pendingProducers = [];
+    state.sendTransport   = null;
     state.recvTransport = null;
     state.device        = null;
     state.roomId        = null;
