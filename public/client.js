@@ -22,7 +22,7 @@ const state = {
 
 const el = {};  // DOM refs, populated in init()
 
-// ── JOIN ──────────────────────────────────────────────────────────────────────
+// ── JOIN ─────────────────────────────────────────────────────────────
 async function joinRoom() {
     const roomId = el.roomInput.value.trim() || 'room1';
     state.roomId = roomId;
@@ -43,7 +43,7 @@ async function joinRoom() {
     }
 }
 
-// ── DEVICE ────────────────────────────────────────────────────────────────────
+// ── DEVICE ─────────────────────────────────────────────────────────────
 async function loadDevice(routerRtpCapabilities) {
     state.device = new window.mediasoupClient.Device();
     await state.device.load({ routerRtpCapabilities });
@@ -66,7 +66,7 @@ function transportOptions(params) {
     };
 }
 
-// ── SEND TRANSPORT ────────────────────────────────────────────────────────────
+// ─�� SEND TRANSPORT ──────────────────────────────────────────────────────────
 async function createSendTransport(params) {
     const t = state.device.createSendTransport(transportOptions(params));
 
@@ -87,7 +87,7 @@ async function createSendTransport(params) {
     state.sendTransport = t;
 }
 
-// ── RECV TRANSPORT ────────────────────────────────────────────────────────────
+// ── RECV TRANSPORT ──────────────────────────────────────────────────────────
 async function createRecvTransport(params) {
     const t = state.device.createRecvTransport(transportOptions(params));
 
@@ -103,7 +103,7 @@ async function createRecvTransport(params) {
     state.recvTransport = t;
 }
 
-// ── PRODUCE ───────────────────────────────────────────────────────────────────
+// ── PRODUCE ────────────────────────────────────────────────────────────
 async function startProducing() {
     const audioTrack = state.localStream?.getAudioTracks()[0];
     if (audioTrack) {
@@ -129,7 +129,7 @@ async function startProducing() {
     }
 }
 
-// ── CONSUME ───────────────────────────────────────────────────────────────────
+// ── CONSUME ────────────────────────────────────────────────────────────
 async function consumeProducer(producerId) {
     // Queue if transports not ready yet (drained after setup completes)
     if (!state.device || !state.recvTransport) {
@@ -155,15 +155,18 @@ async function consumeProducer(producerId) {
                     rtpParameters: params.rtpParameters,
                 });
 
-                // Attach track to DOM element
-                attachTrack(params.producerUserId, consumer, params.kind);
+                // Use producerUserId from server response
+                const userId = params.producerUserId;
+                console.log('Attaching track for user:', userId, 'kind:', params.kind);
+                
+                attachTrack(userId, consumer, params.kind);
 
                 // Tell server to resume (server created consumer paused)
                 socket.emit('consumer-resume', { consumerId: consumer.id });
                 // Also resume on client side
                 await consumer.resume();
 
-                console.log('▶️ Consumer resumed:', params.kind, 'from', params.producerUserId);
+                console.log('▶️ Consumer resumed:', params.kind, 'from', userId);
                 updateParticipantCount();
             } catch (err) {
                 console.error('recvTransport.consume error:', err);
@@ -176,13 +179,14 @@ async function consumeProducer(producerId) {
 // ── ATTACH TRACK TO DOM ───────────────────────────────────────────────────────
 function attachTrack(userId, consumer, kind) {
     const stream = new MediaStream([consumer.track]);
+    const consumerKey = `${userId}-${kind}`;  // FIX: Use proper key format
 
     if (kind === 'audio') {
         // Use a hidden <audio> element — no video tile, just sound
-        let audio = document.getElementById('audio-' + userId);
+        let audio = document.getElementById(`audio-${userId}`);
         if (!audio) {
             audio = document.createElement('audio');
-            audio.id = 'audio-' + userId;
+            audio.id = `audio-${userId}`;
             audio.autoplay = true;
             audio.style.display = 'none';
             document.body.appendChild(audio);
@@ -192,12 +196,12 @@ function attachTrack(userId, consumer, kind) {
             // If autoplay blocked, play on first user click
             document.addEventListener('click', () => audio.play().catch(() => {}), { once: true });
         });
-        state.consumers.set(userId + '-audio', { consumer, kind, userId });
+        state.consumers.set(consumerKey, { consumer, kind, userId });
         return;
     }
 
     // Video: create or reuse a tile
-    const wrapperId = 'video-' + userId + '-video';
+    const wrapperId = `video-${userId}-video`;
     let wrapper = document.getElementById(wrapperId);
     if (!wrapper) {
         wrapper = createVideoTile(userId, false);
@@ -237,10 +241,10 @@ function attachTrack(userId, consumer, kind) {
         });
 
     if (placeholder) placeholder.style.display = 'none';
-    state.consumers.set(userId + '-video', { consumer, kind, userId });
+    state.consumers.set(consumerKey, { consumer, kind, userId });
 }
 
-// ── SOCKET LISTENERS ──────────────────────────────────────────────────────────
+// ── SOCKET LISTENERS ─────────────────────────────────────────────────────────
 function setupSocketListeners() {
     socket.off('router-capabilities');
     socket.off('existing-producers');
@@ -292,10 +296,18 @@ function setupSocketListeners() {
 
     socket.on('user-disconnected', (userId) => {
         console.log('👋', userId, 'disconnected');
-        document.getElementById('video-' + userId + '-video')?.remove();
-        document.getElementById('audio-' + userId)?.remove();
+        
+        // Remove video element
+        const videoElement = document.getElementById(`video-${userId}-video`);
+        if (videoElement) videoElement.remove();
+        
+        // Remove audio element
+        const audioElement = document.getElementById(`audio-${userId}`);
+        if (audioElement) audioElement.remove();
+        
+        // Clean up consumers with proper key matching
         for (const key of [...state.consumers.keys()]) {
-            if (key.startsWith(userId + '-')) {
+            if (key.startsWith(`${userId}-`)) {
                 state.consumers.get(key)?.consumer?.close();
                 state.consumers.delete(key);
             }
@@ -305,7 +317,7 @@ function setupSocketListeners() {
     });
 }
 
-// ── LOCAL STREAM ──────────────────────────────────────────────────────────────
+// ── LOCAL STREAM ───────────────────────────────────────────────────────────
 async function getLocalStream() {
     const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -325,10 +337,10 @@ async function getLocalStream() {
     return stream;
 }
 
-// ── DOM HELPERS ───────────────────────────────────────────────────────────────
+// ── DOM HELPERS ───────────────────────────────────────────────────────────
 function createVideoTile(userId, isLocal) {
     const wrapper = document.createElement('div');
-    wrapper.id = 'video-' + userId + '-video';
+    wrapper.id = `video-${userId}-video`;
     wrapper.className = 'video-wrapper ' + (isLocal ? 'local' : 'remote');
 
     const video = document.createElement('video');
@@ -371,7 +383,7 @@ function resetUI() {
     el.leaveBtn.disabled = true;
 }
 
-// ── LEAVE ─────────────────────────────────────────────────────────────────────
+// ── LEAVE ─────────────────────────────────────────────────────────────
 function leaveRoom() {
     state.localStream?.getTracks().forEach(t => t.stop());
     state.producers.audio?.close();
@@ -397,7 +409,7 @@ function leaveRoom() {
     setStatus('🔴 Déconnecté', 'info');
 }
 
-// ── INIT ──────────────────────────────────────────────────────────────────────
+// ── INIT ─────────────────────────────────────────────────────────────
 function init() {
     el.joinBtn         = document.getElementById('joinBtn');
     el.leaveBtn        = document.getElementById('leaveBtn');

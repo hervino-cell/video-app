@@ -1,3 +1,4 @@
+// server/index.js
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const express  = require('express');
 const http     = require('http');
@@ -14,7 +15,7 @@ const io     = new Server(server, {
     transports: ['websocket', 'polling'],
 });
 
-// ── STATIC FILES ──────────────────────────────────────────────────────────────
+// ── STATIC FILES ───────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/mediasoup-client.js', (req, res) => {
@@ -63,7 +64,7 @@ function makeTransportOptions() {
     };
 }
 
-// ── MEDIASOUP WORKER ──────────────────────────────────────────────────────────
+// ── MEDIASOUP WORKER ─────────────────────────────────────────────────────────
 let worker;
 async function initMediasoup() {
     worker = await mediasoup.createWorker({
@@ -75,7 +76,7 @@ async function initMediasoup() {
     console.log('✅ mediasoup worker ready');
 }
 
-// ── CLEANUP HELPER ────────────────────────────────────────────────────────────
+// ── CLEANUP HELPER ──────────────────────────────────────────────────────────
 function closePeer(roomId, socketId) {
     const room = getRoom(roomId);
     const peer = room?.peers.get(socketId);
@@ -86,7 +87,7 @@ function closePeer(roomId, socketId) {
     try { peer.recvTransport?.close(); } catch (_) {}
 }
 
-// ── SOCKET HANDLERS ───────────────────────────────────────────────────────────
+// ── SOCKET HANDLERS ──────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
     console.log('🔌 connected:', socket.id);
     let roomId = null;
@@ -198,8 +199,17 @@ io.on('connection', (socket) => {
             peer.consumers.set(consumer.id, consumer);
 
             let producerUserId = null;
-            for (const [uid, p] of room.peers)
-                if (p.producers.has(producerId)) { producerUserId = uid; break; }
+            let producerKind = null;
+            for (const [uid, p] of room.peers) {
+                for (const [pid, producer] of p.producers) {
+                    if (pid === producerId) {
+                        producerUserId = uid;
+                        producerKind = producer.kind;
+                        break;
+                    }
+                }
+                if (producerUserId) break;
+            }
 
             console.log('🍽  consumer', consumer.id, consumer.kind, 'for', socket.id, '(paused)');
             cb({ id: consumer.id, producerId, kind: consumer.kind,
@@ -254,7 +264,7 @@ async function detectPublicIp() {
     }
 }
 
-// ── START ─────────────────────────────────────────────────────────────────────
+// ── START ─────────────────────────────────────────────────────────────
 async function start() {
     await detectPublicIp();
     await initMediasoup();
