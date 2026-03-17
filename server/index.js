@@ -47,28 +47,20 @@ async function getIceServers() {
 }
 
 // ── MEDIASOUP TRANSPORT OPTIONS ───────────────────────────────────────────────
-// FIX: Proper listenIps configuration
+// FIX: Proper configuration for WebRTC media transport
 function makeTransportOptions() {
-    const listenIps = [];
+    const announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP;
     
-    // Check if we have an announced IP (from env or auto-detect)
-    if (process.env.MEDIASOUP_ANNOUNCED_IP) {
-        listenIps.push({
-            ip: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
-            announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP,
-        });
-    } else {
-        // Fallback for local testing
-        listenIps.push({
-            ip: '0.0.0.0',
-        });
-    }
-
     return {
-        listenIps,
-        enableUdp: true,
+        listenIps: [
+            {
+                ip: '0.0.0.0',
+                announcedIp: announcedIp || undefined,
+            }
+        ],
+        enableUdp: false,  // FIX: Disable UDP for Render (blocked anyway)
         enableTcp: true,
-        preferTcp: true,  // FIX: Prefer TCP on constrained networks
+        preferTcp: true,
         initialAvailableOutgoingBitrate: 1_000_000,
         maxIncomingBitrate: 1_500_000,
     };
@@ -170,7 +162,7 @@ io.on('connection', (socket) => {
             const iceServers = await getIceServers();
             const options = makeTransportOptions();
             
-            console.log('Creating sendTransport with options:', JSON.stringify(options, null, 2));
+            console.log(`Creating sendTransport for ${socket.id} with announcedIp: ${process.env.MEDIASOUP_ANNOUNCED_IP}`);
             
             const t = await room.router.createWebRtcTransport(options);
             
@@ -203,7 +195,7 @@ io.on('connection', (socket) => {
             const iceServers = await getIceServers();
             const options = makeTransportOptions();
             
-            console.log('Creating recvTransport with options:', JSON.stringify(options, null, 2));
+            console.log(`Creating recvTransport for ${socket.id} with announcedIp: ${process.env.MEDIASOUP_ANNOUNCED_IP}`);
             
             const t = await room.router.createWebRtcTransport(options);
             
@@ -280,7 +272,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // CONSUME — created PAUSED, resumed only after client confirms ready
+    // CONSUME
     socket.on('consume', async ({ producerId, rtpCapabilities }, cb) => {
         try {
             const room = getRoom(roomId);
@@ -325,7 +317,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // CONSUMER RESUME — client calls this once track is attached to DOM
+    // CONSUMER RESUME
     socket.on('consumer-resume', async ({ consumerId }) => {
         try {
             const peer = getRoom(roomId)?.peers.get(socket.id);
@@ -369,7 +361,7 @@ io.on('connection', (socket) => {
 // ── AUTO-DETECT PUBLIC IP ─────────────────────────────────────────────────────
 async function detectPublicIp() {
     if (process.env.MEDIASOUP_ANNOUNCED_IP) {
-        console.log('🌐 announced IP (env):', process.env.MEDIASOUP_ANNOUNCED_IP);
+        console.log('🌐 announced IP (from env):', process.env.MEDIASOUP_ANNOUNCED_IP);
         return;
     }
     try {
@@ -379,7 +371,7 @@ async function detectPublicIp() {
         console.log('🌐 announced IP (auto-detected):', ip);
     } catch (err) {
         console.error('⚠️ could not detect public IP:', err.message);
-        console.log('⚠️ Using localhost - will only work on local network');
+        console.log('⚠️ Please set MEDIASOUP_ANNOUNCED_IP environment variable');
     }
 }
 
@@ -392,10 +384,13 @@ async function start() {
         
         const PORT = process.env.PORT || 3000;
         server.listen(PORT, '0.0.0.0', () => {
-            console.log('🚀 Server listening on port', PORT);
-            console.log('📊 Environment:');
-            console.log('   - MEDIASOUP_ANNOUNCED_IP:', process.env.MEDIASOUP_ANNOUNCED_IP);
-            console.log('   - METERED_API_KEY configured:', !!process.env.METERED_API_KEY);
+            console.log('\n🚀 Server started successfully!');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.log('📊 Configuration:');
+            console.log('   Port:', PORT);
+            console.log('   Announced IP:', process.env.MEDIASOUP_ANNOUNCED_IP || 'NOT SET ⚠️');
+            console.log('   Node ENV:', process.env.NODE_ENV || 'development');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         });
     } catch (err) {
         console.error('❌ Failed to start server:', err);

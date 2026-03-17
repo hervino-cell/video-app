@@ -15,3 +15,5 @@ services:
         value: 3000
       - key: METERED_API_KEY
         value: 35bc0752073676aafcc58f20471787c3a1ab
+      - key: MEDIASOUP_ANNOUNCED_IP
+        value: AUTO  # Will be auto-detected by the server

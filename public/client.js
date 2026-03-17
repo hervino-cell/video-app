@@ -1,4 +1,4 @@
-// public/client.js - COMPLETE CORRECTED VERSION
+// public/client.js
 // mediasoup-client bundled by esbuild → window.mediasoupClient
 
 if (!window.mediasoupClient) {
@@ -18,7 +18,7 @@ const state = {
     producers: { audio: null, video: null },
     consumers: new Map(),
     pendingProducers: [],
-    remoteProducers: new Map(), // FIX: Track all remote producers with their userId
+    remoteStreams: new Map(), // NEW: Track remote video/audio elements
 };
 
 const el = {};
@@ -164,14 +164,13 @@ async function consumeProducer(producerId) {
 
                 console.log('✅ Consumer created:', consumer.id, 'kind:', consumer.kind);
 
-                // FIX: Store the userId from server response
                 const userId = params.producerUserId;
                 if (!userId) {
                     console.error('❌ No producerUserId in params!', params);
                     return resolve();
                 }
 
-                // Track this consumer with proper key
+                // Track this consumer
                 const consumerKey = `${userId}-${params.kind}`;
                 state.consumers.set(consumerKey, {
                     id: consumer.id,
@@ -183,7 +182,7 @@ async function consumeProducer(producerId) {
 
                 console.log('Stored consumer with key:', consumerKey);
 
-                // Attach track to DOM
+                // Attach track to DOM BEFORE resuming
                 attachTrack(userId, consumer, params.kind);
 
                 // Resume consumer
@@ -214,19 +213,23 @@ function attachTrack(userId, consumer, kind) {
 
     if (kind === 'audio') {
         console.log('Creating audio element for user:', userId);
-        let audio = document.getElementById(`audio-${userId}`);
-        if (!audio) {
-            audio = document.createElement('audio');
-            audio.id = `audio-${userId}`;
-            audio.autoplay = true;
-            audio.playsinline = true;
-            audio.style.display = 'none';
-            document.body.appendChild(audio);
-            console.log('Audio element created:', audio.id);
-        }
         
+        // FIX: Remove old audio if exists
+        const oldAudio = document.getElementById(`audio-${userId}`);
+        if (oldAudio) oldAudio.remove();
+        
+        const audio = document.createElement('audio');
+        audio.id = `audio-${userId}`;
+        audio.autoplay = true;
+        audio.playsinline = true;
+        audio.style.display = 'none';
         audio.srcObject = stream;
-        console.log('Audio srcObject set');
+        
+        document.body.appendChild(audio);
+        console.log('Audio element created and added to DOM:', audio.id);
+        
+        // FIX: Store reference to prevent garbage collection
+        state.remoteStreams.set(`audio-${userId}`, audio);
         
         audio.play()
             .then(() => {
@@ -234,15 +237,20 @@ function attachTrack(userId, consumer, kind) {
             })
             .catch((err) => {
                 console.warn('⚠️ Audio autoplay blocked:', err.message);
-                document.addEventListener('click', () => {
-                    audio.play().catch(() => {});
-                }, { once: true });
+                // Try again on user interaction
+                const playAudio = () => {
+                    audio.play().catch(e => console.error('Failed to play audio:', e));
+                    document.removeEventListener('click', playAudio);
+                };
+                document.addEventListener('click', playAudio);
             });
         return;
     }
 
     // VIDEO
     console.log('Creating video element for user:', userId);
+    
+    // FIX: Ensure wrapper exists and stays in DOM
     const wrapperId = `video-${userId}-video`;
     let wrapper = document.getElementById(wrapperId);
     
@@ -251,7 +259,6 @@ function attachTrack(userId, consumer, kind) {
         wrapper = createVideoTile(userId, false);
         wrapper.id = wrapperId;
         el.videosContainer.appendChild(wrapper);
-        updateVideoLayout();
         console.log('Video wrapper added to DOM');
     } else {
         console.log('Reusing existing video wrapper:', wrapperId);
@@ -267,15 +274,17 @@ function attachTrack(userId, consumer, kind) {
 
     console.log('Setting video srcObject');
     video.srcObject = stream;
+    
+    // FIX: Store reference to prevent garbage collection
+    state.remoteStreams.set(`video-${userId}`, video);
 
-    // Remove placeholder
+    // Hide placeholder
     if (placeholder) {
         placeholder.style.display = 'none';
         console.log('Placeholder hidden');
     }
 
-    // Start playback
-    video.muted = true;
+    // Start playback with proper error handling
     console.log('Attempting video play...');
     
     video.play()
@@ -300,10 +309,12 @@ function attachTrack(userId, consumer, kind) {
                 ].join(';');
                 btn.onclick = () => {
                     video.muted = false;
-                    video.play().then(() => {
-                        btn.remove();
-                        console.log('✅ Video playing after click');
-                    }).catch(() => {});
+                    video.play()
+                        .then(() => {
+                            btn.remove();
+                            console.log('✅ Video playing after click');
+                        })
+                        .catch(e => console.error('Failed to play:', e));
                 };
                 wrapper.appendChild(btn);
                 console.log('Play button added');
@@ -359,7 +370,6 @@ function setupSocketListeners() {
         console.log('📦 existing-producers:', list.length, 'producer(s)');
         for (const { producerId, userId, kind } of list) {
             console.log('Existing producer - producerId:', producerId, 'userId:', userId, 'kind:', kind);
-            state.remoteProducers.set(producerId, { userId, kind });
             await consumeProducer(producerId);
         }
     });
@@ -372,26 +382,31 @@ function setupSocketListeners() {
             return;
         }
         
-        state.remoteProducers.set(producerId, { userId, kind });
         await consumeProducer(producerId);
     });
 
     socket.on('user-disconnected', (userId) => {
         console.log('👋 user-disconnected:', userId);
         
-        // Remove video tile
-        const videoElement = document.getElementById(`video-${userId}-video`);
-        if (videoElement) {
-            videoElement.remove();
-            console.log('Video element removed:', userId);
+        // Remove video wrapper
+        const videoWrapper = document.getElementById(`video-${userId}-video`);
+        if (videoWrapper) {
+            videoWrapper.remove();
+            console.log('Video wrapper removed:', userId);
         }
 
         // Remove audio element
         const audioElement = document.getElementById(`audio-${userId}`);
         if (audioElement) {
+            audioElement.pause();
+            audioElement.srcObject = null;
             audioElement.remove();
             console.log('Audio element removed:', userId);
         }
+
+        // Clean up stream references
+        state.remoteStreams.delete(`video-${userId}`);
+        state.remoteStreams.delete(`audio-${userId}`);
 
         // Remove consumers
         const keysToDelete = [];
@@ -508,11 +523,20 @@ function leaveRoom() {
     state.sendTransport?.close();
     state.recvTransport?.close();
 
+    // Clean up all remote streams
+    for (const stream of state.remoteStreams.values()) {
+        if (stream instanceof HTMLAudioElement || stream instanceof HTMLVideoElement) {
+            stream.pause();
+            stream.srcObject = null;
+            stream.remove();
+        }
+    }
+    state.remoteStreams.clear();
+
     state.roomId = state.device = state.sendTransport = state.recvTransport =
         state.localStream = null;
     state.producers = { audio: null, video: null };
     state.consumers.clear();
-    state.remoteProducers.clear();
     state.pendingProducers = [];
 
     el.videosContainer.innerHTML = '';
