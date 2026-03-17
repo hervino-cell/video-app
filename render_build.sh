@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -e
+echo "📦 Installing dependencies..."
 npm install
-npm run build 2>/dev/null || true
+echo "🔨 Building mediasoup-client bundle..."
+npm run build
+echo "✅ Build complete"

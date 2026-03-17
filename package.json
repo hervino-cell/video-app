@@ -10,18 +10,18 @@
     "render-build": "npm install && npm run build"
   },
   "engines": {
-    "node": "24.x"
+    "node": "20.x"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
-    "mediasoup": "^3.19.17",
+    "mediasoup": "^3.14.0",
     "mediasoup-client": "^3.7.6",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^2.0.20",
-    "esbuild": "^0.21.0"
+    "esbuild": "^0.21.0",
+    "nodemon": "^2.0.20"
   }
 }

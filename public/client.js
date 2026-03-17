@@ -1,48 +1,58 @@
-// mediasoup-client bundled by esbuild with --global-name=mediasoupClient
-// exposes window.mediasoupClient
+// mediasoup-client is bundled by esbuild (npm run build) and served at /mediasoup-client.js
+// It exposes window.mediasoupClient globally.
+if (!window.mediasoupClient) {
+    document.getElementById('status').textContent =
+        '❌ mediasoup-client bundle not found. Run "npm run build" and restart the server.';
+    throw new Error('window.mediasoupClient is undefined');
+}
 const mediasoupClient = window.mediasoupClient;
 
+// ── SOCKET ────────────────────────────────────────────────────────────────────
 const socket = io({
-    transports: ['websocket', 'polling'],
-    secure: window.location.protocol === 'https:',
+    transports:  ['websocket', 'polling'],
+    secure:      window.location.protocol === 'https:',
     reconnection: true
 });
 
+// ── STATE ─────────────────────────────────────────────────────────────────────
 const state = {
-    roomId: null, device: null, sendTransport: null, recvTransport: null,
-    localStream: null, producers: { audio: null, video: null },
-    consumers: new Map(), peers: new Map()
+    roomId:        null,
+    device:        null,
+    sendTransport: null,
+    recvTransport: null,
+    localStream:   null,
+    producers:     { audio: null, video: null },
+    consumers:     new Map(),   // key: `${userId}-${kind}`  value: { consumer, kind, userId }
+    peers:         new Map()
 };
 
-const elements = {};
-function getElements() {
-    return {
-        joinBtn:         document.getElementById('joinBtn'),
-        leaveBtn:        document.getElementById('leaveBtn'),
-        roomInput:       document.getElementById('roomInput'),
-        toggleAudio:     document.getElementById('toggleAudio'),
-        toggleVideo:     document.getElementById('toggleVideo'),
-        videosContainer: document.getElementById('videosContainer'),
-        status:          document.getElementById('status'),
-        roomInfo:        document.getElementById('roomInfo')
-    };
-}
+// ── DOM REFS (populated after DOMContentLoaded) ───────────────────────────────
+const el = {};
 
-// ─── JOIN ────────────────────────────────────────────────────────────────────
+// ── JOIN ──────────────────────────────────────────────────────────────────────
 async function joinRoom() {
-    const roomId = elements.roomInput?.value.trim() || 'room1';
+    const roomId = el.roomInput?.value.trim() || 'room1';
     state.roomId = roomId;
 
-    if (elements.joinBtn)   elements.joinBtn.disabled   = true;
-    if (elements.leaveBtn)  elements.leaveBtn.disabled  = false;
-    if (elements.roomInput) elements.roomInput.disabled = true;
+    el.joinBtn.disabled   = true;
+    el.leaveBtn.disabled  = false;
+    el.roomInput.disabled = true;
     setStatus('⏳ Connexion en cours…', 'info');
 
     try {
+        // 1. Get local camera/mic first so the user sees themselves immediately
         state.localStream = await getLocalStream();
+
+        // 2. Register all socket listeners BEFORE emitting join-room
+        //    (router-capabilities can arrive very quickly)
         setupSocketListeners();
+
+        // 3. Ask the server to join
         socket.emit('join-room', roomId, { name: 'User' }, (res) => {
-            if (res?.error) { setStatus(`❌ ${res.error}`, 'error'); resetUI(); }
+            if (res?.error) {
+                setStatus(`❌ ${res.error}`, 'error');
+                resetUI();
+            }
         });
     } catch (err) {
         console.error('joinRoom error:', err);
@@ -51,77 +61,89 @@ async function joinRoom() {
     }
 }
 
-// ─── DEVICE ──────────────────────────────────────────────────────────────────
+// ── DEVICE ────────────────────────────────────────────────────────────────────
 async function loadDevice(routerRtpCapabilities) {
     state.device = new mediasoupClient.Device();
     await state.device.load({ routerRtpCapabilities });
+    console.log('✅ Device loaded');
 }
 
-// ─── TRANSPORTS ──────────────────────────────────────────────────────────────
+// ── SEND TRANSPORT ────────────────────────────────────────────────────────────
 async function createSendTransport() {
     return new Promise((resolve, reject) => {
         socket.emit('create-send-transport', (params) => {
             if (params.error) return reject(new Error(params.error));
 
-            // iceServers comes from server (contains TURN credentials)
-            state.sendTransport = state.device.createSendTransport({
+            const transport = state.device.createSendTransport({
                 id:             params.id,
                 iceParameters:  params.iceParameters,
                 iceCandidates:  params.iceCandidates,
                 dtlsParameters: params.dtlsParameters,
-                iceServers:     params.iceServers   // TURN from server
+                iceServers:     params.iceServers   // TURN credentials from server
             });
 
-            state.sendTransport.on('connect', ({ dtlsParameters }, cb, errback) => {
-                socket.emit('transport-connect', {
-                    transportId: state.sendTransport.id, dtlsParameters
-                }, (res) => res?.error ? errback(new Error(res.error)) : cb());
+            transport.on('connect', ({ dtlsParameters }, cb, errback) => {
+                socket.emit('transport-connect',
+                    { transportId: transport.id, dtlsParameters },
+                    (res) => res?.error ? errback(new Error(res.error)) : cb()
+                );
             });
 
-            state.sendTransport.on('produce', ({ kind, rtpParameters, appData }, cb, errback) => {
+            transport.on('produce', ({ kind, rtpParameters, appData }, cb, errback) => {
                 socket.emit('produce', { kind, rtpParameters, appData },
-                    (res) => res?.error ? errback(new Error(res.error)) : cb({ id: res.id }));
+                    (res) => res?.error ? errback(new Error(res.error)) : cb({ id: res.id })
+                );
             });
 
-            resolve(state.sendTransport);
+            state.sendTransport = transport;
+            resolve(transport);
         });
     });
 }
 
+// ── RECV TRANSPORT ────────────────────────────────────────────────────────────
 async function createRecvTransport() {
     return new Promise((resolve, reject) => {
         socket.emit('create-recv-transport', (params) => {
             if (params.error) return reject(new Error(params.error));
 
-            state.recvTransport = state.device.createRecvTransport({
+            const transport = state.device.createRecvTransport({
                 id:             params.id,
                 iceParameters:  params.iceParameters,
                 iceCandidates:  params.iceCandidates,
                 dtlsParameters: params.dtlsParameters,
-                iceServers:     params.iceServers   // TURN from server
+                iceServers:     params.iceServers
             });
 
-            state.recvTransport.on('connect', ({ dtlsParameters }, cb, errback) => {
-                socket.emit('transport-connect', {
-                    transportId: state.recvTransport.id, dtlsParameters
-                }, (res) => res?.error ? errback(new Error(res.error)) : cb());
+            transport.on('connect', ({ dtlsParameters }, cb, errback) => {
+                socket.emit('transport-connect',
+                    { transportId: transport.id, dtlsParameters },
+                    (res) => res?.error ? errback(new Error(res.error)) : cb()
+                );
             });
 
-            resolve(state.recvTransport);
+            state.recvTransport = transport;
+            resolve(transport);
         });
     });
 }
 
-// ─── CONSUME ─────────────────────────────────────────────────────────────────
+// ── CONSUME A REMOTE PRODUCER ─────────────────────────────────────────────────
 async function consumeProducer(producerId) {
-    if (!state.device || !state.recvTransport) return;
+    if (!state.device || !state.recvTransport) {
+        console.warn('consumeProducer: device or recvTransport not ready yet');
+        return;
+    }
 
     return new Promise((resolve) => {
         socket.emit('consume', {
             producerId,
             rtpCapabilities: state.device.rtpCapabilities
         }, async (params) => {
-            if (params.error) { console.warn('consume error:', params.error); return resolve(); }
+            if (params.error) {
+                console.warn('consume error:', params.error);
+                return resolve();
+            }
             try {
                 const consumer = await state.recvTransport.consume({
                     id:            params.id,
@@ -139,30 +161,47 @@ async function consumeProducer(producerId) {
     });
 }
 
-// ─── ATTACH REMOTE TRACK ─────────────────────────────────────────────────────
+// ── ATTACH REMOTE TRACK TO A VIDEO ELEMENT ────────────────────────────────────
 function attachRemoteTrack(userId, consumer, kind) {
     const wrapperId = `video-${userId}-${kind}`;
-    if (document.getElementById(wrapperId)) return;
 
-    const { wrapper, video, placeholder } = createVideoElement(userId, kind, false);
+    // If a wrapper already exists for this user+kind, just update the srcObject
+    let wrapper = document.getElementById(wrapperId);
+    if (wrapper) {
+        const video = wrapper.querySelector('video');
+        if (video) {
+            video.srcObject = new MediaStream([consumer.track]);
+            video.play().catch(() => {});
+        }
+        state.consumers.set(`${userId}-${kind}`, { consumer, kind, userId });
+        return;
+    }
+
+    // Create a new wrapper
+    const result = createVideoElement(userId, kind, false);
+    wrapper = result.wrapper;
+    const { video, placeholder } = result;
+
     video.srcObject = new MediaStream([consumer.track]);
     video.onloadedmetadata = () => {
         video.play().catch(() => {});
         if (placeholder) placeholder.style.display = 'none';
     };
 
-    if (elements.videosContainer) elements.videosContainer.appendChild(wrapper);
+    el.videosContainer.appendChild(wrapper);
     state.consumers.set(`${userId}-${kind}`, { consumer, kind, userId });
     updateVideoLayout();
 }
 
-// ─── SOCKET LISTENERS ────────────────────────────────────────────────────────
+// ── SOCKET LISTENERS ──────────────────────────────────────────────────────────
 function setupSocketListeners() {
+    // Remove stale listeners to avoid duplicates on re-join
     socket.off('router-capabilities');
     socket.off('existing-producers');
     socket.off('new-producer');
     socket.off('user-disconnected');
 
+    // Step 1 – server sends router caps after we join
     socket.on('router-capabilities', async ({ routerRtpCapabilities }) => {
         try {
             await loadDevice(routerRtpCapabilities);
@@ -170,8 +209,8 @@ function setupSocketListeners() {
             await createRecvTransport();
             await startProducing();
 
-            if (elements.toggleAudio) elements.toggleAudio.disabled = false;
-            if (elements.toggleVideo) elements.toggleVideo.disabled = false;
+            el.toggleAudio.disabled = false;
+            el.toggleVideo.disabled = false;
             setStatus(`✅ Connecté à "${state.roomId}"`, 'success');
         } catch (err) {
             console.error('Setup error:', err);
@@ -179,40 +218,48 @@ function setupSocketListeners() {
         }
     });
 
-    // Consume producers that already exist in the room
+    // Step 2 – server sends producers that were already in the room
     socket.on('existing-producers', async (producers) => {
+        console.log(`📦 ${producers.length} existing producer(s)`);
         for (const { producerId } of producers) {
             await consumeProducer(producerId);
         }
     });
 
-    // New producer added while we're in the room
+    // A new peer started producing while we're already in the room
     socket.on('new-producer', async ({ producerId, userId }) => {
-        if (userId === socket.id) return;
+        if (userId === socket.id) return; // ignore our own producers echoed back
+        console.log(`🆕 New producer from ${userId} (${producerId})`);
         await consumeProducer(producerId);
     });
 
+    // A peer left or disconnected
     socket.on('user-disconnected', (userId) => {
-        removeVideo(userId);
+        console.log(`👋 ${userId} left`);
+        removeVideosForUser(userId);
         state.peers.delete(userId);
         for (const key of [...state.consumers.keys()]) {
-            if (key.startsWith(userId)) state.consumers.delete(key);
+            if (key.startsWith(`${userId}-`)) {
+                state.consumers.get(key)?.consumer?.close();
+                state.consumers.delete(key);
+            }
         }
         updateParticipantCount();
         updateVideoLayout();
     });
 }
 
-// ─── PRODUCE LOCAL MEDIA ─────────────────────────────────────────────────────
+// ── PRODUCE LOCAL TRACKS ──────────────────────────────────────────────────────
 async function startProducing() {
     if (!state.localStream) return;
 
     const audioTrack = state.localStream.getAudioTracks()[0];
     if (audioTrack) {
         state.producers.audio = await state.sendTransport.produce({
-            track: audioTrack,
+            track:        audioTrack,
             codecOptions: { opusStereo: true, opusDtx: true }
         });
+        console.log('🎤 Audio producer ready');
     }
 
     const videoTrack = state.localStream.getVideoTracks()[0];
@@ -220,53 +267,54 @@ async function startProducing() {
         state.producers.video = await state.sendTransport.produce({
             track: videoTrack,
             encodings: [
-                { maxBitrate: 100000 },
-                { maxBitrate: 300000 },
-                { maxBitrate: 900000 }
+                { maxBitrate: 100_000 },
+                { maxBitrate: 300_000 },
+                { maxBitrate: 900_000 }
             ],
             codecOptions: { videoGoogleStartBitrate: 1000 }
         });
+        console.log('📹 Video producer ready');
     }
 }
 
-// ─── LOCAL STREAM ─────────────────────────────────────────────────────────────
+// ── LOCAL STREAM ──────────────────────────────────────────────────────────────
 async function getLocalStream() {
     const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
         video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     });
 
+    // Clear old video tiles and show local preview
+    el.videosContainer.innerHTML = '';
     const { wrapper, video, placeholder } = createVideoElement('local', 'video', true);
     video.srcObject = stream;
     video.onloadedmetadata = () => {
         video.play().catch(() => {});
         if (placeholder) placeholder.style.display = 'none';
     };
-
-    if (elements.videosContainer) {
-        elements.videosContainer.innerHTML = '';
-        elements.videosContainer.appendChild(wrapper);
-    }
+    el.videosContainer.appendChild(wrapper);
     updateVideoLayout();
     return stream;
 }
 
-// ─── UI HELPERS ──────────────────────────────────────────────────────────────
+// ── UI HELPERS ────────────────────────────────────────────────────────────────
 function createVideoElement(userId, kind, isLocal = false) {
     const wrapper = document.createElement('div');
     wrapper.className = `video-wrapper ${isLocal ? 'local' : 'remote'}`;
-    wrapper.id = `video-${userId}-${kind}`;
+    wrapper.id        = `video-${userId}-${kind}`;
 
-    const video = document.createElement('video');
-    video.autoplay = true; video.playsInline = true; video.muted = isLocal;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'video-overlay';
-    overlay.innerHTML = `<div class="user-label">${isLocal ? 'Moi' : `User ${userId.slice(-4)}`}</div>`;
+    const video    = document.createElement('video');
+    video.autoplay   = true;
+    video.playsInline = true;
+    video.muted      = isLocal; // mute self to avoid feedback
 
     const placeholder = document.createElement('div');
     placeholder.className = 'video-placeholder';
     placeholder.innerHTML = isLocal ? '👤' : '👥';
+
+    const overlay  = document.createElement('div');
+    overlay.className = 'video-overlay';
+    overlay.innerHTML = `<div class="user-label">${isLocal ? 'Moi' : `User ${userId.slice(-4)}`}</div>`;
 
     wrapper.appendChild(video);
     wrapper.appendChild(placeholder);
@@ -275,83 +323,110 @@ function createVideoElement(userId, kind, isLocal = false) {
 }
 
 function updateVideoLayout() {
-    if (!elements.videosContainer) return;
-    const count = elements.videosContainer.querySelectorAll('.video-wrapper').length;
-    const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
-    elements.videosContainer.style.gridTemplateColumns = `repeat(${cols}, minmax(200px, 1fr))`;
+    const count = el.videosContainer.querySelectorAll('.video-wrapper').length;
+    const cols  = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+    el.videosContainer.style.gridTemplateColumns = `repeat(${cols}, minmax(200px, 1fr))`;
 }
 
 function updateParticipantCount() {
     const userIds = new Set([...state.consumers.values()].map(c => c.userId));
-    const count = userIds.size + 1;
-    if (elements.roomInfo)
-        elements.roomInfo.textContent = `👥 ${count} participant${count > 1 ? 's' : ''}`;
+    const count   = userIds.size + 1; // +1 for ourselves
+    el.roomInfo.textContent = `👥 ${count} participant${count > 1 ? 's' : ''}`;
 }
 
 function setStatus(msg, type = 'info') {
-    if (elements.status) {
-        elements.status.textContent = msg;
-        elements.status.className = `status ${type}`;
-    }
+    el.status.textContent = msg;
+    el.status.className   = `status ${type}`;
 }
 
-function removeVideo(userId) {
-    ['audio', 'video'].forEach(k => document.getElementById(`video-${userId}-${k}`)?.remove());
+function removeVideosForUser(userId) {
+    ['audio', 'video'].forEach(k =>
+        document.getElementById(`video-${userId}-${k}`)?.remove()
+    );
 }
 
 function resetUI() {
-    if (elements.joinBtn)   elements.joinBtn.disabled   = false;
-    if (elements.leaveBtn)  elements.leaveBtn.disabled  = true;
-    if (elements.roomInput) elements.roomInput.disabled = false;
+    el.joinBtn.disabled   = false;
+    el.leaveBtn.disabled  = true;
+    el.roomInput.disabled = false;
 }
 
+// ── LEAVE ROOM ────────────────────────────────────────────────────────────────
 function leaveRoom() {
     state.localStream?.getTracks().forEach(t => t.stop());
+
     state.producers.audio?.close();
     state.producers.video?.close();
-    for (const c of state.consumers.values()) c.consumer.close();
+    for (const { consumer } of state.consumers.values()) consumer?.close();
+
     state.sendTransport?.close();
     state.recvTransport?.close();
 
-    state.producers = { audio: null, video: null };
-    state.consumers.clear(); state.peers.clear();
-    state.sendTransport = null; state.recvTransport = null;
-    state.device = null; state.roomId = null;
+    // Reset state
+    state.producers     = { audio: null, video: null };
+    state.consumers.clear();
+    state.peers.clear();
+    state.sendTransport = null;
+    state.recvTransport = null;
+    state.device        = null;
+    state.roomId        = null;
+    state.localStream   = null;
 
-    if (elements.videosContainer) elements.videosContainer.innerHTML = '';
+    el.videosContainer.innerHTML    = '';
+    el.toggleAudio.disabled         = true;
+    el.toggleAudio.textContent      = '🔊 Audio ON';
+    el.toggleAudio.classList.remove('muted');
+    el.toggleVideo.disabled         = true;
+    el.toggleVideo.textContent      = '📹 Vidéo ON';
+    el.toggleVideo.classList.remove('muted');
+    el.roomInfo.textContent         = '';
+
     resetUI();
-    if (elements.toggleAudio) { elements.toggleAudio.disabled = true; elements.toggleAudio.textContent = '🔊 Audio ON'; }
-    if (elements.toggleVideo) { elements.toggleVideo.disabled = true; elements.toggleVideo.textContent = '📹 Vidéo ON'; }
     setStatus('🔴 Déconnecté', 'info');
 }
 
-// ─── INIT ────────────────────────────────────────────────────────────────────
+// ── INIT ──────────────────────────────────────────────────────────────────────
 function init() {
-    Object.assign(elements, getElements());
+    el.joinBtn          = document.getElementById('joinBtn');
+    el.leaveBtn         = document.getElementById('leaveBtn');
+    el.roomInput        = document.getElementById('roomInput');
+    el.toggleAudio      = document.getElementById('toggleAudio');
+    el.toggleVideo      = document.getElementById('toggleVideo');
+    el.videosContainer  = document.getElementById('videosContainer');
+    el.status           = document.getElementById('status');
+    el.roomInfo         = document.getElementById('roomInfo');
 
-    elements.joinBtn?.addEventListener('click', joinRoom);
-    elements.leaveBtn?.addEventListener('click', () => { socket.emit('leave-room'); leaveRoom(); });
+    // Join / Leave
+    el.joinBtn.addEventListener('click',  joinRoom);
+    el.leaveBtn.addEventListener('click', () => {
+        socket.emit('leave-room');
+        leaveRoom();
+    });
 
-    elements.toggleAudio?.addEventListener('click', () => {
+    // Audio toggle
+    el.toggleAudio.addEventListener('click', () => {
         const t = state.localStream?.getAudioTracks()[0];
-        if (t) {
-            t.enabled = !t.enabled;
-            elements.toggleAudio.textContent = `🔊 Audio ${t.enabled ? 'ON' : 'OFF'}`;
-            elements.toggleAudio.classList.toggle('muted', !t.enabled);
-        }
+        if (!t) return;
+        t.enabled = !t.enabled;
+        el.toggleAudio.textContent = `🔊 Audio ${t.enabled ? 'ON' : 'OFF'}`;
+        el.toggleAudio.classList.toggle('muted', !t.enabled);
     });
 
-    elements.toggleVideo?.addEventListener('click', () => {
+    // Video toggle
+    el.toggleVideo.addEventListener('click', () => {
         const t = state.localStream?.getVideoTracks()[0];
-        if (t) {
-            t.enabled = !t.enabled;
-            elements.toggleVideo.textContent = `📹 Vidéo ${t.enabled ? 'ON' : 'OFF'}`;
-            elements.toggleVideo.classList.toggle('muted', !t.enabled);
-        }
+        if (!t) return;
+        t.enabled = !t.enabled;
+        el.toggleVideo.textContent = `📹 Vidéo ${t.enabled ? 'ON' : 'OFF'}`;
+        el.toggleVideo.classList.toggle('muted', !t.enabled);
     });
 
+    // Socket connection status
     socket.on('connect',    () => setStatus('🔌 Connecté au serveur — cliquez "Rejoindre"', 'success'));
-    socket.on('disconnect', () => { if (state.roomId) leaveRoom(); });
+    socket.on('disconnect', () => {
+        if (state.roomId) leaveRoom();
+        setStatus('🔴 Déconnecté du serveur', 'error');
+    });
 
     setStatus('🔌 Connexion au serveur…', 'info');
 }
