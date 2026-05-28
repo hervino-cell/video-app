@@ -42,7 +42,10 @@ async function getIceServers() {
         return cachedIce;
     } catch (err) {
         console.error('⚠️  TURN fetch failed:', err.message);
-        return [{ urls: 'stun:stun.l.google.com:19302' }];
+        return [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+        ];
     }
 }
 
@@ -58,9 +61,9 @@ function makeTransportOptions() {
                 announcedIp: announcedIp || undefined,
             }
         ],
-        enableUdp: false,  // FIX: Disable UDP for Render (blocked anyway)
+        enableUdp: true,
         enableTcp: true,
-        preferTcp: true,
+        preferTcp: false,
         initialAvailableOutgoingBitrate: 1_000_000,
         maxIncomingBitrate: 1_500_000,
     };
