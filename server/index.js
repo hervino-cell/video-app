@@ -28,25 +28,31 @@ app.get('/mediasoup-client.js', (req, res) => {
 // ── TURN CREDENTIALS (Metered.ca, cached 1 h) ─────────────────────────────────
 let cachedIce = null, iceFetchedAt = 0;
 
+// ── ICE SERVERS (Metered.ca) ──────────────────────────────────────────────
 async function getIceServers() {
-    const now = Date.now();
-    if (cachedIce && now - iceFetchedAt < 3_600_000) return cachedIce;
-    try {
-        const r = await fetch(
-            'https://lenoir-jules.metered.live/api/v1/turn/credentials?apiKey=' +
-            process.env.METERED_API_KEY
-        );
-        cachedIce = await r.json();
-        iceFetchedAt = now;
-        console.log('✅ TURN credentials refreshed, servers:', cachedIce.length);
-        return cachedIce;
-    } catch (err) {
-        console.error('⚠️  TURN fetch failed:', err.message);
-        return [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-        ];
-    }
+    return [
+        { urls: "stun:stun.relay.metered.ca:80" },
+        {
+            urls: "turn:na.relay.metered.ca:80",
+            username: "ef645a39417834de70c930cd",
+            credential: "32e07v8WF3Qm5Jzr",
+        },
+        {
+            urls: "turn:na.relay.metered.ca:80?transport=tcp",
+            username: "ef645a39417834de70c930cd",
+            credential: "32e07v8WF3Qm5Jzr",
+        },
+        {
+            urls: "turn:na.relay.metered.ca:443",
+            username: "ef645a39417834de70c930cd",
+            credential: "32e07v8WF3Qm5Jzr",
+        },
+        {
+            urls: "turns:na.relay.metered.ca:443?transport=tcp",
+            username: "ef645a39417834de70c930cd",
+            credential: "32e07v8WF3Qm5Jzr",
+        },
+    ];
 }
 
 // ── MEDIASOUP TRANSPORT OPTIONS ───────────────────────────────────────────────
@@ -61,9 +67,9 @@ function makeTransportOptions() {
                 announcedIp: announcedIp || undefined,
             }
         ],
-        enableUdp: false,
+        enableUdp: true,
         enableTcp: true,
-        preferTcp: true,
+        preferTcp: false,
         initialAvailableOutgoingBitrate: 1_000_000,
         maxIncomingBitrate: 1_500_000,
     };
