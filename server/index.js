@@ -61,9 +61,9 @@ function makeTransportOptions() {
                 announcedIp: announcedIp || undefined,
             }
         ],
-        enableUdp: true,
+        enableUdp: false,
         enableTcp: true,
-        preferTcp: false,
+        preferTcp: true,
         initialAvailableOutgoingBitrate: 1_000_000,
         maxIncomingBitrate: 1_500_000,
     };
